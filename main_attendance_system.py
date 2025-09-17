@@ -16,71 +16,60 @@ st.set_page_config(page_title="Attendance System", layout="wide")
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- File and Directory Paths ---
 DATA_DIR = "data"
-DB_PATH = os.path.join(DATA_DIR, "attendance.db") # Place DB in data folder
+DB_PATH = os.path.join(DATA_DIR, "attendance.db")
 SHAPE_PREDICTOR_PATH = os.path.join(DATA_DIR, "data_dlib", "shape_predictor_68_face_landmarks.dat")
 FACE_REC_MODEL_PATH = os.path.join(DATA_DIR, "data_dlib", "dlib_face_recognition_resnet_model_v1.dat")
 FACES_DATA_DIR = os.path.join(DATA_DIR, "data_faces_from_camera")
 FEATURES_CSV_PATH = os.path.join(DATA_DIR, "features_all.csv")
 
-# Create directories if they don't exist
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(os.path.join(DATA_DIR, "data_dlib"), exist_ok=True)
 os.makedirs(FACES_DATA_DIR, exist_ok=True)
 
-
-# --- Helper Functions ---
 def check_required_files():
-    """Checks if essential model files exist and displays instructions if not."""
     if not os.path.exists(SHAPE_PREDICTOR_PATH) or not os.path.exists(FACE_REC_MODEL_PATH):
         st.error(
             "**Required Model Files Not Found!**\n\n"
-            "Please make sure the following files are downloaded and placed in the correct directories:\n\n"
-            f"* `dlib_face_recognition_resnet_model_v1.dat`: Place this in the `{os.path.join(DATA_DIR, 'data_dlib')}` folder.\n"
-            f"* `shape_predictor_68_face_landmarks.dat`: Place this in the `{os.path.join(DATA_DIR, 'data_dlib')}` folder.\n\n"
-            "You can download the shape predictor from [here](http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2) (you will need to unzip it)."
+            "Please make sure these are downloaded and placed in:\n\n"
+            f"`{os.path.join(DATA_DIR, 'data_dlib')}` folder.\n\n"
+            "Download links:\n"
+            "[Shape Predictor](http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2)"
         )
         st.stop()
     return True
 
-# --- Database Management ---
 def setup_database():
-    """Initializes the SQLite database and creates necessary tables."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS students (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        class TEXT NOT NULL,
-        UNIQUE(name, class)
-    )
+        CREATE TABLE IF NOT EXISTS students (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            class TEXT NOT NULL,
+            UNIQUE(name, class)
+        )
     """)
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS attendance (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        time TEXT NOT NULL,
-        date DATE NOT NULL,
-        UNIQUE(name, date)
-    )
+        CREATE TABLE IF NOT EXISTS attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            time TEXT NOT NULL,
+            date DATE NOT NULL,
+            UNIQUE(name, date)
+        )
     """)
     conn.commit()
     conn.close()
 
-
-# --- Face Recognition Core Logic ---
 @st.cache_resource
 def load_models():
-    """Loads Dlib models into memory."""
     detector = dlib.get_frontal_face_detector()
     predictor = dlib.shape_predictor(SHAPE_PREDICTOR_PATH)
     face_rec_model = dlib.face_recognition_model_v1(FACE_REC_MODEL_PATH)
     return detector, predictor, face_rec_model
 
 def return_128d_features(img_bgr, face_rect, predictor, face_rec_model):
-    """Computes 128D face descriptor for a given face."""
     try:
         shape = predictor(img_bgr, face_rect)
         return np.array(face_rec_model.compute_face_descriptor(img_bgr, shape))
@@ -89,7 +78,6 @@ def return_128d_features(img_bgr, face_rect, predictor, face_rec_model):
         return None
 
 def get_all_known_faces():
-    """Loads all known face features from the CSV file."""
     if os.path.exists(FEATURES_CSV_PATH):
         try:
             df = pd.read_csv(FEATURES_CSV_PATH, header=None)
@@ -97,25 +85,20 @@ def get_all_known_faces():
             features_known_arr = df.iloc[:, 1:].values.astype(np.float64)
             return person_names, features_known_arr
         except Exception as e:
-            st.error(f"Error loading or processing '{FEATURES_CSV_PATH}': {e}")
+            st.error(f"Error loading '{FEATURES_CSV_PATH}': {e}")
             return [], np.array([])
     return [], np.array([])
 
 def compute_and_save_features_from_images():
-    """
-    Scans the faces data directory, computes features for each image,
-    and saves each feature vector as a new row in the CSV.
-    """
     person_folders = [f for f in os.listdir(FACES_DATA_DIR) if os.path.isdir(os.path.join(FACES_DATA_DIR, f))]
     if not person_folders:
-        # If no folders, create an empty CSV
         open(FEATURES_CSV_PATH, 'w').close()
         return
 
     detector, predictor, face_rec_model = load_models()
     all_features_list = []
-    
     progress_bar = st.progress(0, "Processing student images...")
+
     for i, person_folder in enumerate(person_folders):
         person_path = os.path.join(FACES_DATA_DIR, person_folder)
         photo_files = [f for f in os.listdir(person_path) if f.endswith(('.jpg', '.png'))]
@@ -123,26 +106,26 @@ def compute_and_save_features_from_images():
         for photo in photo_files:
             img_path = os.path.join(person_path, photo)
             img_bgr = cv2.imread(img_path)
-            if img_bgr is None: continue
+            if img_bgr is None:
+                continue
 
             faces = detector(img_bgr, 1)
             if len(faces) == 1:
                 features = return_128d_features(img_bgr, faces[0], predictor, face_rec_model)
                 if features is not None:
                     all_features_list.append([person_folder] + list(features))
-        
+
         progress_bar.progress((i + 1) / len(person_folders), f"Processing: {person_folder}")
 
     if all_features_list:
         df = pd.DataFrame(all_features_list)
         df.to_csv(FEATURES_CSV_PATH, header=False, index=False)
-        st.success(f"Successfully processed {len(all_features_list)} images and updated features.")
+        st.success(f"Processed {len(all_features_list)} images and updated features.")
     else:
-        st.warning("No valid faces found in any images. Features file is empty.")
-        open(FEATURES_CSV_PATH, 'w').close() # Create empty file if no features
-    progress_bar.empty()
+        st.warning("No valid faces found. Features file is empty.")
+        open(FEATURES_CSV_PATH, 'w').close()
 
-# --- Streamlit UI Pages ---
+    progress_bar.empty()
 
 def login_page():
     st.header("Attendance System Login")
@@ -159,7 +142,7 @@ def login_page():
                     st.rerun()
                 else:
                     st.error("Invalid username or password")
-    
+
     elif login_as == "Student":
         conn = sqlite3.connect(DB_PATH)
         students = pd.read_sql_query("SELECT name FROM students ORDER BY name", conn)['name'].tolist()
@@ -191,9 +174,7 @@ def teacher_dashboard():
 def register_student_ui():
     st.header("Register a New Student")
 
-    # Part 1: Interactive elements are now OUTSIDE the form
-    st.markdown("**Photo Capture Instructions:**")
-    st.info("Please take at least 3 high-quality photos: \n1. Looking straight. \n2. Looking slightly left. \n3. Looking slightly right.")
+    st.info("Please take at least 3 high-quality photos (straight, left, right).")
 
     if 'captured_images' not in st.session_state:
         st.session_state.captured_images = []
@@ -215,22 +196,18 @@ def register_student_ui():
             st.session_state.captured_images = []
             st.rerun()
 
-    # Part 2: Form for data entry and final submission
     with st.form("registration_form", clear_on_submit=True):
         student_name = st.text_input("Student Name", placeholder="e.g., John Doe")
         student_class = st.text_input("Student Class", placeholder="e.g., Class 10A")
-        
         submitted = st.form_submit_button("Register Student")
         
         if submitted:
-            # On submission, use the form's current values
             if not student_name.strip() or not student_class.strip():
                 st.error("Name and class are required.")
             elif len(st.session_state.captured_images) < 3:
                 st.error("At least 3 photos are required.")
             else:
                 register_student(student_name.strip(), student_class.strip())
-                # Clear photo state after successful registration and rerun
                 st.session_state.captured_images = []
                 st.rerun()
 
@@ -253,12 +230,9 @@ def register_student(student_name, student_class):
             if len(faces) == 1:
                 cv2.imwrite(os.path.join(person_dir, f"{valid_photos_saved}.jpg"), img_bgr)
                 valid_photos_saved += 1
-            else:
-                st.warning(f"Photo {i+1} was discarded (no face or multiple faces detected).")
 
         if valid_photos_saved < 1:
-            st.error("Registration failed: No valid photos with a single face were provided.")
-            # Clean up failed registration
+            st.error("Registration failed: No valid photos provided.")
             shutil.rmtree(person_dir)
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
@@ -268,20 +242,18 @@ def register_student(student_name, student_class):
             return
 
         st.success(f"Student '{student_name}' registered with {valid_photos_saved} valid photos.")
-        st.info("Updating face recognition model...")
         compute_and_save_features_from_images()
-        # Photo state is cleared in the UI function after this returns
 
     except sqlite3.IntegrityError:
-        st.error(f"Student '{student_name}' in class '{student_class}' already exists.")
+        st.error(f"Student '{student_name}' already exists.")
     except Exception as e:
-        st.error(f"An error occurred: {e}")
+        st.error(f"Error: {e}")
 
 def take_attendance_ui():
     st.header("Take Attendance")
     person_names, features_known_arr = get_all_known_faces()
     if not person_names:
-        st.warning("No students registered. Go to 'Register Student' tab.")
+        st.warning("No students registered.")
         return
 
     img_file_buffer = st.camera_input("Scan Faces")
@@ -297,28 +269,26 @@ def take_attendance_ui():
             if features is not None:
                 distances = np.linalg.norm(features_known_arr - features, axis=1)
                 min_idx = np.argmin(distances)
-                
                 name = "Unknown"
-                color = (0, 0, 255) # Red for unknown
-                if distances[min_idx] < 0.4: # Confidence threshold
+                color = (0, 0, 255)
+                if distances[min_idx] < 0.4:
                     name = person_names[min_idx]
-                    color = (0, 255, 0) # Green for known
+                    color = (0, 255, 0)
                     recognized_in_frame.append(name)
                 
                 d = face
                 cv2.rectangle(img_bgr, (d.left(), d.top()), (d.right(), d.bottom()), color, 2)
                 cv2.putText(img_bgr, name, (d.left(), d.top() - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
-        # Mark attendance and display summary
         if recognized_in_frame:
             marked_now, already_marked = mark_attendance(recognized_in_frame)
             if marked_now: st.success(f"Attendance marked for: {', '.join(marked_now)}")
-            if already_marked: st.info(f"Already present today: {', '.join(already_marked)}")
+            if already_marked: st.info(f"Already present: {', '.join(already_marked)}")
         elif faces:
             st.warning("No registered students recognized.")
         else:
             st.info("No faces detected.")
-        
+
         st.image(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
 
 def mark_attendance(names):
@@ -326,7 +296,7 @@ def mark_attendance(names):
     cursor = conn.cursor()
     today = datetime.now().strftime("%Y-%m-%d")
     marked_now, already_marked = [], []
-    for name in set(names): # Use set to avoid duplicate processing
+    for name in set(names):
         try:
             cursor.execute("INSERT INTO attendance (name, time, date) VALUES (?, ?, ?)",
                            (name, datetime.now().strftime("%H:%M:%S"), today))
@@ -357,7 +327,6 @@ def manage_students_ui():
 
 def delete_student(student_name):
     try:
-        # Delete from DB
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("DELETE FROM students WHERE name = ?", (student_name,))
@@ -365,16 +334,12 @@ def delete_student(student_name):
         conn.commit()
         conn.close()
         
-        # Delete image folder
         person_dir = os.path.join(FACES_DATA_DIR, student_name)
         if os.path.exists(person_dir):
             shutil.rmtree(person_dir)
         
-        st.success(f"Deleted {student_name} and all associated data.")
-        # Retrain model
-        st.info("Re-processing all images to update the model...")
+        st.success(f"Deleted {student_name}. Re-processing data...")
         compute_and_save_features_from_images()
-
     except Exception as e:
         st.error(f"Error deleting student: {e}")
 
@@ -448,7 +413,7 @@ def midday_meal_report_ui():
                     mime='text/csv',
                 )
         except Exception as e:
-            st.error(f"An error occurred while generating the report: {e}")
+            st.error(f"Error generating report: {e}")
             conn.close()
 
 def student_dashboard():
@@ -469,15 +434,14 @@ def student_dashboard():
 
 def logout():
     for key in list(st.session_state.keys()):
-        if key not in ['theme']: # Optional: preserve theme setting
+        if key not in ['theme']:
             del st.session_state[key]
     st.rerun()
 
-# --- Main App Logic ---
 def main():
     check_required_files()
     setup_database()
-    
+
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
     
@@ -489,8 +453,4 @@ def main():
         elif st.session_state.get("role") == "student":
             student_dashboard()
         else:
-            login_page() # Fallback
-
-if __name__ == "__main__":
-    main()
-
+            login_page()
